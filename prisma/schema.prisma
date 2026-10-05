@@ -1,0 +1,196 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+}
+
+enum GoalType {
+  TIME
+  COUNT
+}
+
+enum GoalMode {
+  DEADLINE
+  RECURRING
+}
+
+enum GoalPeriod {
+  WEEKLY
+  MONTHLY
+}
+
+enum MemberRole {
+  OWNER
+  MEMBER
+}
+
+model User {
+  id           Int    @id @default(autoincrement())
+  email        String @unique
+  name         String @db.VarChar(100)
+  passwordHash String
+  // IANA zone, e.g. "Europe/Belgrade". Days, weeks and the heatmap are counted in this zone.
+  timezone     String @default("UTC") @db.VarChar(64)
+
+  emailVerified              Boolean   @default(false)
+  emailVerificationTokenHash String?   @unique
+  emailVerificationExpiresAt DateTime?
+  resetPasswordTokenHash     String?   @unique
+  resetPasswordExpiresAt     DateTime?
+  failedLoginAttempts        Int       @default(0)
+  lockedUntil                DateTime?
+  twoFactorSecret            String?
+  twoFactorEnabled           Boolean   @default(false)
+  twoFactorLastTimeStep      Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  ownedGoals      Goal[]
+  memberships     GoalMember[]
+  createdInvites  GoalInvite[]
+  timeEntries     TimeEntry[]
+  progressEntries ProgressEntry[]
+  refreshTokens   RefreshToken[]
+}
+
+model RefreshToken {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  // SHA-256 of the token; the raw value only ever lives in the cookie.
+  token     String   @unique
+  revoked   Boolean  @default(false)
+  expiresAt DateTime
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model RateLimitEntry {
+  id        Int      @id @default(autoincrement())
+  key       String   @unique
+  count     Int      @default(1)
+  expiresAt DateTime @db.DateTime(3)
+
+  @@index([expiresAt])
+}
+
+model Goal {
+  id         Int         @id @default(autoincrement())
+  ownerId    Int
+  name       String      @db.VarChar(100)
+  type       GoalType
+  // Only for COUNT goals, e.g. "pages".
+  unit       String?     @db.VarChar(20)
+  mode       GoalMode
+  // Only for RECURRING goals.
+  period     GoalPeriod?
+  // Calendar dates in `timezone`; the deadline day is included.
+  startDate  DateTime    @db.Date
+  deadline   DateTime?   @db.Date
+  // Copied from the owner at creation, so a shared goal has one set of period boundaries.
+  timezone   String      @db.VarChar(64)
+  archivedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  owner           User            @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  targets         GoalTarget[]
+  members         GoalMember[]
+  invites         GoalInvite[]
+  timeEntries     TimeEntry[]
+  progressEntries ProgressEntry[]
+
+  @@index([ownerId])
+}
+
+// Every change of the target adds a row, so past periods keep the target they had (D-2).
+// TIME targets are in seconds, COUNT targets in the goal's unit.
+model GoalTarget {
+  id            Int      @id @default(autoincrement())
+  goalId        Int
+  value         Int
+  effectiveFrom DateTime @db.DateTime(3)
+
+  goal Goal @relation(fields: [goalId], references: [id], onDelete: Cascade)
+
+  @@index([goalId, effectiveFrom])
+}
+
+// Personal goals have exactly one OWNER row too, so access is always "is there a membership".
+model GoalMember {
+  id       Int        @id @default(autoincrement())
+  goalId   Int
+  userId   Int
+  role     MemberRole
+  joinedAt DateTime   @default(now())
+
+  goal Goal @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([goalId, userId])
+  @@index([userId])
+}
+
+model GoalInvite {
+  id          Int       @id @default(autoincrement())
+  goalId      Int
+  createdById Int
+  tokenHash   String    @unique
+  expiresAt   DateTime
+  revokedAt   DateTime?
+  createdAt   DateTime  @default(now())
+
+  goal      Goal @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  createdBy User @relation(fields: [createdById], references: [id], onDelete: Cascade)
+
+  @@index([goalId])
+}
+
+model TimeEntry {
+  id            Int       @id @default(autoincrement())
+  userId        Int
+  goalId        Int?
+  startedAt     DateTime  @db.DateTime(3)
+  // NULL while the timer runs.
+  endedAt       DateTime? @db.DateTime(3)
+  note          String?   @db.VarChar(500)
+  // Equals userId while running, NULL otherwise. The unique index lets the database itself
+  // guarantee one running timer per user, even for two Start requests in the same millisecond.
+  runningUserId Int?      @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  goal Goal? @relation(fields: [goalId], references: [id], onDelete: SetNull)
+
+  @@index([userId, startedAt])
+  @@index([goalId, startedAt])
+}
+
+model ProgressEntry {
+  id         Int      @id @default(autoincrement())
+  userId     Int
+  goalId     Int
+  amount     Int
+  // Calendar date in the goal's timezone.
+  occurredOn DateTime @db.Date
+  note       String?  @db.VarChar(500)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  goal Goal @relation(fields: [goalId], references: [id], onDelete: Cascade)
+
+  @@index([goalId, occurredOn])
+  @@index([userId])
+}
