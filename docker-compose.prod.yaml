@@ -1,0 +1,66 @@
+# Production stack for a single host behind a Cloudflare Tunnel. No ports are published: the only
+# way in is tunnel -> web (nginx: static frontend + /api proxy) -> api -> mysql.
+# Expects ../Focentra-Frontend next to this repo and a .env.production file (see README).
+#   docker compose --env-file .env.production -f docker-compose.prod.yaml up -d --build
+name: focentra
+services:
+  mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?}
+      MYSQL_DATABASE: ${DB_NAME:?}
+      MYSQL_USER: ${DB_USER:?}
+      MYSQL_PASSWORD: ${DB_PASSWORD:?}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      # Over TCP on purpose: during first-run initialisation MySQL answers on the socket only.
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # One-shot: applies pending migrations, then exits. The api waits for it.
+  migrate:
+    build:
+      context: .
+      target: build
+    env_file: .env.production
+    environment:
+      DATABASE_URL: mysql://${DB_USER}:${DB_PASSWORD}@mysql:3306/${DB_NAME}
+    command: npx prisma migrate deploy
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  api:
+    build: .
+    restart: unless-stopped
+    env_file: .env.production
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      # One hop (nginx). Cloudflare puts the real client IP last in X-Forwarded-For.
+      TRUST_PROXY: 1
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  web:
+    build: ../Focentra-Frontend
+    restart: unless-stopped
+    depends_on:
+      - api
+
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?}
+    depends_on:
+      - web
+
+volumes:
+  mysql_data:
