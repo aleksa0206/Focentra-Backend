@@ -2,7 +2,8 @@
 
 REST API for Focentra, a personal time tracker built around goals. You set a goal in hours ("40 h of Angular by December", "8 h of study every week") or in units ("300 pages"), run a timer while you work, and the API tells you whether you are ahead of the plan, on track or behind it. Goals can be shared with a study group: everyone's time adds up, and each member sees the entries on that goal but nothing else of the others.
 
-Frontend: [Focentra-Frontend](https://github.com/aleksa0206/Focentra-Frontend) (Angular).
+- Live: [focentra.space](https://focentra.space)
+- Frontend: [Focentra-Frontend](https://github.com/aleksa0206/Focentra-Frontend) (Angular)
 
 ![Focentra dashboard](https://raw.githubusercontent.com/aleksa0206/Focentra-Frontend/main/docs/screenshots/dashboard.png)
 
